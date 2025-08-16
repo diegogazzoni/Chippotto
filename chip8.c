@@ -5,6 +5,7 @@
 #include <time.h>
 #include <SDL2/SDL.h>
 
+#define COSMAC 1
 #define CHIP_CLOCK 600
 #define TIMER_CLOCK 60
 #define SCREEN_CLOCK 60
@@ -70,7 +71,7 @@ uint8_t send_to_video(chip8* chip, int x, int y, uint8_t* bytes, int l) {
             uint8_t pixel = (s >> (7-j)) & 0x1;
             uint8_t wx = (j+x) % SCREEN_W; 
             uint8_t wy = (i+y) % SCREEN_H;
-            uint16_t k = wx + wy*SCREEN_W;
+            uint16_t k = wx + wy*SCREEN_W; 
             flag |= pixel && chip->vram[k];
             chip->vram[k] ^= pixel;
         }
@@ -314,9 +315,9 @@ void fetch_dec_exec(chip8* chip) {
                     }
                     chip->pc += 2;
                     break;
-                case 0x6: 
+                case 0x6: // NOTE: 8xy6 and 8xyE are defined with original COSMAC VIP behavior
                     { 
-                        uint8_t buf = chip->reg[vy]; // vy
+                        uint8_t buf = chip->reg[vx];
                         chip->reg[vx] = buf >> 1;
                         chip->reg[0xf] = buf & 0x1;
                     }
@@ -334,7 +335,7 @@ void fetch_dec_exec(chip8* chip) {
                     break;
                 case 0xE:
                     {   
-                        uint8_t buf = chip->reg[vy]; // vy
+                        uint8_t buf = chip->reg[vx]; 
                         chip->reg[vx] = buf << 1;
                         chip->reg[0xf] = (buf >> 7) & 0x1;
                     }
@@ -352,7 +353,7 @@ void fetch_dec_exec(chip8* chip) {
             chip->ir = nnn;
             chip->pc += 2;
             break;
-        case 0xB000: // quirks (true: nnn+vx, false: nnn+v0)
+        case 0xB000: // quirks (nnn+vx or nnn+v0)
             chip->pc = (uint16_t)(nnn + (uint16_t)chip->reg[0]);
             break;
         case 0xC000:
@@ -363,7 +364,6 @@ void fetch_dec_exec(chip8* chip) {
             {    
                 uint8_t x = chip->reg[vx];
                 uint8_t y = chip->reg[vy];
-                //chip->reg[0xF] = 0 // in case vx or vy are F! (to avoid overwriting)
                 chip->reg[0xF] = send_to_video(chip, x, y, &chip->mem[chip->ir], l);
             }
             chip->should_render = 1;
@@ -438,14 +438,14 @@ void fetch_dec_exec(chip8* chip) {
                     for (int i=0;i<=vx;i++){
                         chip->mem[i+chip->ir] = chip->reg[i]; 
                     }
-                    chip->ir += vx+1;
+                    //chip->ir += vx+1;
                     chip->pc += 2;
                     break;
                 case 0x65:
                     for (int i=0;i<=vx;i++){
                         chip->reg[i] = chip->mem[i+chip->ir];
                     }
-                    chip->ir += vx+1;
+                    //chip->ir += vx+1;
                     chip->pc += 2;
                     break;
             }
