@@ -14,3 +14,5 @@ The intepreter expects a binary ROM file as input. You need to provide it.
 ```
 ./chip path-to-rom
 ```
+## Description
+This small project was created for educational purposes, to familiarize users with the functioning of low-level systems. It currently runs the main games available online (e.g., PONG, INVADERS, TICTAC).
