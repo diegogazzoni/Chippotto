@@ -5,7 +5,7 @@
 #include <time.h>
 #include <SDL2/SDL.h>
 
-#define CHIP_CLOCK 500
+#define CHIP_CLOCK 600
 #define TIMER_CLOCK 60
 #define SCREEN_CLOCK 60
 #define SCREEN_W 64
@@ -30,6 +30,8 @@ typedef struct chip8 {
     uint8_t st;
     uint8_t vram[SCREEN_W*SCREEN_H];
     uint8_t key[16];
+    uint8_t beep_flag;
+    uint8_t should_render; // to avoid unnecessary renderings
 } chip8;
 
 /*
@@ -61,7 +63,7 @@ int load_rom(chip8* chip, char* fname) {
 }
 
 uint8_t send_to_video(chip8* chip, int x, int y, uint8_t* bytes, int l) { 
-    uint8_t coll_flag = 0;
+    uint8_t flag=0;
     for (int i=0;i<l;i++) { // index of the byte to read (sprite y)
         uint8_t s = bytes[i]; // byte number. It defines the y of the sprite slice.
         for (int j=0;j<SPRITE_W;j++) { // bit number. It defines the x of the sprite part.
@@ -69,22 +71,21 @@ uint8_t send_to_video(chip8* chip, int x, int y, uint8_t* bytes, int l) {
             uint8_t wx = (j+x) % SCREEN_W; 
             uint8_t wy = (i+y) % SCREEN_H;
             uint16_t k = wx + wy*SCREEN_W;
-            if (chip->vram[k] && pixel) {
-                coll_flag = 1;
-            }
+            flag |= pixel && chip->vram[k];
             chip->vram[k] ^= pixel;
         }
     }
-    return coll_flag;
+    return flag;
 }
 
 void boot(chip8* chip) {
     chip->state = STATE_RUN; // ready to run
-    chip->sp = 0;
+    chip->sp = -1;
     chip->ir = 0;
     chip->pc = 0x200;
     chip->dt = 0;
     chip->st = 0;
+    chip->should_render = 0;
 
     memset(chip->reg, 0, sizeof(uint8_t)*16);
     memset(chip->vram, 0, sizeof(uint8_t)*SCREEN_W*SCREEN_H); 
@@ -107,7 +108,7 @@ void boot(chip8* chip) {
                          0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
                          0xF0, 0x80, 0xF0, 0x80, 0x80, // F
                          }; 
-    memcpy(chip->mem, chset, sizeof(uint8_t)*80);
+    memcpy(chip->mem, chset, sizeof(uint8_t) * 0x50);
 }
 
 void render_ascii(chip8* chip) {
@@ -125,15 +126,17 @@ void render_ascii(chip8* chip) {
 }
 
 void render_sdl(chip8* chip, SDL_Renderer* renderer) {
-    SDL_SetRenderDrawColor(renderer, 0,0,0,0xff);
+    SDL_SetRenderDrawColor(renderer,0x00,0x0d,0x39,0xff);
     SDL_RenderClear(renderer);
-    SDL_RenderPresent(renderer);
+    //SDL_RenderPresent(renderer);
     for (int y=0; y<SCREEN_H; y++) {
         for (int x=0; x<SCREEN_W; x++) {
-            uint8_t pixel = (chip->vram[x + y*SCREEN_W]) * 0xff;
-            SDL_SetRenderDrawColor(renderer, 0, pixel, 0, 0xff);
-            SDL_RenderDrawPoint(renderer, x, y);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+            uint8_t pixel = (chip->vram[x + y*SCREEN_W]);
+            if (pixel) {
+                SDL_SetRenderDrawColor(renderer, pixel*0x91, pixel*0xaa, pixel*0xff, 0xff);
+                SDL_RenderDrawPoint(renderer, x, y);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+            }
         }
     } 
     SDL_RenderPresent(renderer);
@@ -219,20 +222,22 @@ void fetch_dec_exec(chip8* chip) {
     const uint8_t  nn = opcode & 0x00ff;
     const uint16_t nnn = opcode & 0x0fff;
     
+    chip->should_render = 0; // base value
     switch (k) {
         case 0:
-            switch (nn) {
-                case 0xE0: // CLS
+            switch (nnn) {
+                case 0x0E0: // CLS
                     memset(chip->vram, 0, sizeof(uint8_t)*SCREEN_W*SCREEN_H);
+                    chip->should_render = 1;
                     chip->pc += 2;
                     break;
-                case 0xEE: // RET
+                case 0x0EE: // RET
                     chip->pc = chip->stack[chip->sp];
                     chip->sp--;
                     break;
                 default:
-                    //printf("ERROR: UNKNOWN OPCODE [%d]\n", opcode);
-                    //chip->state = STATE_OFF;
+                    printf("ERROR: UNKNOWN OPCODE 0x%04x AT ADDRESS 0x%08x\n", opcode, chip->pc);
+                    chip->state = STATE_OFF;
                     break;
             }
             break;
@@ -240,9 +245,9 @@ void fetch_dec_exec(chip8* chip) {
         case 0x1000: // JP addr
             chip->pc = nnn;
             break;
-        case 0x2000: // CALL addr       
+        case 0x2000: // CALL addr        
             chip->sp++;
-            chip->stack[chip->sp] = chip->pc+2; // saving next instruction
+            chip->stack[chip->sp] = chip->pc+2; // saving next instruction 
             chip->pc = nnn;
             break;
         case 0x3000: // SE Vx, nn
@@ -279,14 +284,17 @@ void fetch_dec_exec(chip8* chip) {
                     break;
                 case 0x1: // OR
                     chip->reg[vx] |= chip->reg[vy];
+                    chip->reg[0xf] = 0;
                     chip->pc+=2;
                     break;
                 case 0x2: // AND 
                     chip->reg[vx] &= chip->reg[vy];
+                    chip->reg[0xf] = 0;
                     chip->pc+=2;
                     break;
                 case 0x3: // XOR
                     chip->reg[vx] ^= chip->reg[vy];
+                    chip->reg[0xf] = 0;
                     chip->pc+=2;
                     break;
                 case 0x4: // ADD Vx, Vy
@@ -301,16 +309,16 @@ void fetch_dec_exec(chip8* chip) {
                     {   
                         uint8_t xv = chip->reg[vx];
                         uint8_t yv = chip->reg[vy];
-                        chip->reg[vx] = (xv-yv) & 0xff; 
-                        chip->reg[0xf] = (xv>yv) ? 1 : 0;
+                        chip->reg[vx] = (xv-yv) & 0xff;  
+                        chip->reg[0xf] = (xv>=yv) ? 1 : 0; 
                     }
                     chip->pc += 2;
                     break;
-                case 0x6:
-                    {
-                        uint8_t old_vx = chip->reg[vx];
-                        chip->reg[vx] = chip->reg[vx] >> 1;
-                        chip->reg[0xf] = old_vx & 0x1;
+                case 0x6: 
+                    { 
+                        uint8_t buf = chip->reg[vy]; // vy
+                        chip->reg[vx] = buf >> 1;
+                        chip->reg[0xf] = buf & 0x1;
                     }
                     chip->pc += 2;
                     break;
@@ -318,16 +326,17 @@ void fetch_dec_exec(chip8* chip) {
                     {   
                         uint8_t xv = chip->reg[vx];
                         uint8_t yv = chip->reg[vy];
+                        chip->reg[0xf] = 0;
                         chip->reg[vx] = (yv-xv);
-                        chip->reg[0xf] = (yv>xv) ? 1 : 0;
+                        chip->reg[0xf] = (yv>=xv) ? 1 : 0;
                     }
                     chip->pc += 2;
                     break;
                 case 0xE:
                     {   
-                        uint8_t old_vx = chip->reg[vx];
-                        chip->reg[vx] = chip->reg[vx] << 1;
-                        chip->reg[0xf] = (old_vx >> 7) & 0x1;
+                        uint8_t buf = chip->reg[vy]; // vy
+                        chip->reg[vx] = buf << 1;
+                        chip->reg[0xf] = (buf >> 7) & 0x1;
                     }
                     chip->pc += 2;
                     break;
@@ -343,36 +352,35 @@ void fetch_dec_exec(chip8* chip) {
             chip->ir = nnn;
             chip->pc += 2;
             break;
-        case 0xB000:
-            chip->pc = nnn + chip->reg[0];
+        case 0xB000: // quirks (true: nnn+vx, false: nnn+v0)
+            chip->pc = (uint16_t)(nnn + (uint16_t)chip->reg[0]);
             break;
         case 0xC000:
-            chip->reg[vx] = (rand() % 256) & nn;
+            chip->reg[vx] = rand() & nn;
             chip->pc += 2;
             break;
         case 0xD000: 
-            {   
-                chip->reg[0xF] = 0;
+            {    
                 uint8_t x = chip->reg[vx];
                 uint8_t y = chip->reg[vy];
-                //printf("DRW V%i, V%i, %i\n", x, y, l);
-                uint8_t coll_flag = send_to_video(chip, x, y, &chip->mem[chip->ir], l);                 
-                chip->reg[0xf] = coll_flag; 
+                //chip->reg[0xF] = 0 // in case vx or vy are F! (to avoid overwriting)
+                chip->reg[0xF] = send_to_video(chip, x, y, &chip->mem[chip->ir], l);
             }
+            chip->should_render = 1;
             chip->pc += 2;
             break;    
         case 0xE000:
             switch (nn) {
                 uint8_t vx_val;
                 case 0x9E:
-                    vx_val = chip->reg[vx];
+                    vx_val = chip->reg[vx] & 0xf;
                     if (chip->key[vx_val]) {
                         chip->pc += 2;
                     }
                     chip->pc += 2;
                     break;
                 case 0xA1:
-                    vx_val = chip->reg[vx];
+                    vx_val = chip->reg[vx] & 0xf;
                     if (!chip->key[vx_val])
                         chip->pc += 2;
                     chip->pc += 2;
@@ -387,14 +395,21 @@ void fetch_dec_exec(chip8* chip) {
                     chip->pc += 2;
                     break;
                 case 0x0A:
-                    /*
-                    Aspettare che il tasto premuto sia rilasciato per salvarlo.
-                    */
-                    for (uint8_t i=0;i<16;i++) {
-                        if (chip->key[i]) { 
-                            chip->reg[vx] = i;
-                            chip->pc += 2; 
+                    {
+                        /*
+                        * Wait for a key pressed and released, then set Vx to it. 
+                        */
+                        uint8_t* old_key = &chip->mem[0x81];
+                        for (uint8_t i=0;i<16;i++) {
+                            if (*(old_key+i) && !chip->key[i]) { // previously active and not now
+                                chip->reg[vx] = i;
+                                chip->pc += 2; 
+                                break;
+                            }
                         } 
+                        for (uint8_t i=0;i<16;i++) {                            
+                            *(old_key+i) = chip->key[i];
+                        }
                     }
                     break;
                 case 0x15:
@@ -410,13 +425,13 @@ void fetch_dec_exec(chip8* chip) {
                     chip->pc += 2;
                     break;
                 case 0x29:
-                    chip->ir = chip->mem[vx * 5]; // charset saved at 0x00 and each char occupies 5 bytes. 
+                    chip->ir = chip->reg[vx] * 5; 
                     chip->pc += 2;
                     break;
                 case 0x33:
                     chip->mem[chip->ir] = (uint8_t) chip->reg[vx] / 100;
-                    chip->mem[chip->ir+1] = (uint8_t) (chip->reg[vx] % 100) / 10;
-                    chip->mem[chip->ir+2] = (uint8_t) ((chip->reg[vx] % 100) % 10);
+                    chip->mem[chip->ir+1] = (uint8_t) (chip->reg[vx] / 10) % 10;
+                    chip->mem[chip->ir+2] = (uint8_t) (chip->reg[vx] % 10);
                     chip->pc += 2;
                     break;
                 case 0x55:
@@ -442,12 +457,14 @@ void fetch_dec_exec(chip8* chip) {
 }
 
 void tick_timers(chip8* chip) {
+    chip->beep_flag = 0;
     if (chip->st > 0) {
         chip->st--;
+        chip->beep_flag = 1; // should beep
     }
     if (chip->dt > 0) {
         chip->dt--;
-    }
+    } 
 }
 
 void dump(chip8* chip) {
@@ -479,11 +496,16 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    SDL_Window* window = NULL;
-    SDL_Renderer* renderer = NULL; 
+    SDL_Window* window = SDL_CreateWindow("Chip8", SDL_WINDOWPOS_CENTERED, 
+                                                   SDL_WINDOWPOS_CENTERED,
+                                                   SCREEN_W*SCALE,
+                                                   SCREEN_H*SCALE,
+                                                   SDL_WINDOW_SHOWN);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED ); 
     SDL_Event e;
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-    SDL_CreateWindowAndRenderer(SCREEN_W*SCALE, SCREEN_H*SCALE, 0, &window, &renderer);
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
+    //SDL_CreateWindowAndRenderer(SCREEN_W*SCALE, SCREEN_H*SCALE, 0, &window, &renderer);
     SDL_RenderSetScale(renderer, SCALE, SCALE);    
 
     uint32_t ticks = 0;
@@ -497,25 +519,37 @@ int main(int argc, char *argv[]) {
     while (1) {
         double now = 1000.0 * ((double)clock() / CLOCKS_PER_SEC);  // ms
         dt_chip += (now-old_chip); // ms
+        dt_timers += (now-old_timers);
         old_chip = now;
-        dt_timers = (now-old_timers);
-
+        old_timers = now;
+        
         while (dt_chip >= target_dt) { 
             event_handler(&chip, &e); 
-            fetch_dec_exec(&chip);
-            render_sdl(&chip, renderer); 
+            fetch_dec_exec(&chip); 
+            if (chip.should_render) {
+                render_sdl(&chip, renderer);
+            }
             dt_chip -= target_dt;  
             ticks++;
         }
 
-        if (dt_timers >= target_dt_timer) {
-            tick_timers(&chip);
-            old_timers = now;
+        while (dt_timers >= target_dt_timer) {
+            tick_timers(&chip); 
+            dt_timers -= target_dt_timer;  
+        }
+        
+        if (chip.beep_flag) {
+            printf("BEEP (dt=%i)\n", chip.dt);
         }
 
         if (chip.state == 0) {
             break;
         }
     }
+
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    
     return 0;
 }
