@@ -4,13 +4,13 @@ A Chip-8 implementation written in C with SDL2.
 
 ## Installation
 To build the interpreter, use:
-'''
+```
 gcc chip8.c -o <name> -lSDL2
-'''
+```
 Make sure you have installed SDL2 in your system.
 
 ## Usage
 The intepreter expects a binary ROM file as input. You need to provide it.
-'''
+```
 ./chip path-to-rom
-'''
+```
