@@ -1,6 +1,6 @@
 # Chippotto
 A Chip-8 implementation written in C with SDL2.
-<\br>
+
 <img width="642" height="359" alt="c8" src="https://github.com/user-attachments/assets/5190a0b9-74df-4bfb-81b4-ceff2a8e0b0f" />
 
 ## Installation
