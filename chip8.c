@@ -91,6 +91,7 @@ void boot(chip8* chip) {
     memset(chip->reg, 0, sizeof(uint8_t)*16);
     memset(chip->vram, 0, sizeof(uint8_t)*SCREEN_W*SCREEN_H); 
     memset(chip->mem, 0, sizeof(uint8_t)*RAM_SIZE);
+    memset(chip->key, 0, sizeof(uint8_t)*16);
 
     uint8_t chset[80] = {0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
                          0x20, 0x60, 0x20, 0x20, 0x70, // 1
