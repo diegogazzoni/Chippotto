@@ -5,6 +5,7 @@
 #include <time.h>
 #include <SDL2/SDL.h>
 
+
 #define COSMAC 1
 #define CHIP_CLOCK 600
 #define TIMER_CLOCK 60
@@ -92,6 +93,7 @@ void boot(chip8* chip) {
     memset(chip->vram, 0, sizeof(uint8_t)*SCREEN_W*SCREEN_H); 
     memset(chip->mem, 0, sizeof(uint8_t)*RAM_SIZE);
     memset(chip->key, 0, sizeof(uint8_t)*16);
+    memset(chip->stack, 0, sizeof(uint16_t)*STACK_SIZE);
 
     uint8_t chset[80] = {0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
                          0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -110,7 +112,7 @@ void boot(chip8* chip) {
                          0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
                          0xF0, 0x80, 0xF0, 0x80, 0x80, // F
                          }; 
-    memcpy(chip->mem, chset, sizeof(uint8_t) * 0x50);
+    memcpy(chip->mem, chset, sizeof(uint8_t)*5*16); // from 0 to 0x4f 
 }
 
 void render_ascii(chip8* chip) {
@@ -127,7 +129,7 @@ void render_ascii(chip8* chip) {
     fflush(stdout);
 }
 
-void render_sdl(chip8* chip, SDL_Renderer* renderer) {
+void render(chip8* chip, SDL_Renderer* renderer) {
     SDL_SetRenderDrawColor(renderer,0x00,0x0d,0x39,0xff);
     SDL_RenderClear(renderer);
     //SDL_RenderPresent(renderer);
@@ -400,7 +402,7 @@ void fetch_dec_exec(chip8* chip) {
                         /*
                         * Wait for a key pressed and released, then set Vx to it. 
                         */
-                        uint8_t* old_key = &chip->mem[0x81];
+                        uint8_t* old_key = &chip->mem[0x50]; // from 0x50 to 0x200 memory is free to be used
                         for (uint8_t i=0;i<16;i++) {
                             if (*(old_key+i) && !chip->key[i]) { // previously active and not now
                                 chip->reg[vx] = i;
@@ -496,8 +498,10 @@ int main(int argc, char *argv[]) {
         printf("PLEASE INDICATE A ROM TO BE LOADED: ./chip <filename>\n");
         return 0;
     }
-
-    SDL_Window* window = SDL_CreateWindow("Chip8", SDL_WINDOWPOS_CENTERED, 
+    
+    char wname[32] = "Chip-8: ";
+    strcat(wname, *(argv+1));
+    SDL_Window* window = SDL_CreateWindow(wname, SDL_WINDOWPOS_CENTERED, 
                                                    SDL_WINDOWPOS_CENTERED,
                                                    SCREEN_W*SCALE,
                                                    SCREEN_H*SCALE,
@@ -506,7 +510,6 @@ int main(int argc, char *argv[]) {
     SDL_Event e;
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
-    //SDL_CreateWindowAndRenderer(SCREEN_W*SCALE, SCREEN_H*SCALE, 0, &window, &renderer);
     SDL_RenderSetScale(renderer, SCALE, SCALE);    
 
     uint32_t ticks = 0;
@@ -528,10 +531,10 @@ int main(int argc, char *argv[]) {
             event_handler(&chip, &e); 
             fetch_dec_exec(&chip); 
             if (chip.should_render) {
-                render_sdl(&chip, renderer);
+                render(&chip, renderer);
             }
             dt_chip -= target_dt;  
-            ticks++;
+            ticks++; 
         }
 
         while (dt_timers >= target_dt_timer) {
@@ -545,7 +548,7 @@ int main(int argc, char *argv[]) {
 
         if (chip.state == 0) {
             break;
-        }
+        } 
     }
 
     SDL_DestroyRenderer(renderer);
